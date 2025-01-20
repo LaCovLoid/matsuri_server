@@ -39,7 +39,6 @@ async function homeHandler(req: any, res: any) {
 
   const now: Date = new Date(); // 현재 날짜
   let month: number = now.getMonth() + 1; // 0 = 1월
-  let matsuriList: {}[] = []; // 축제 정보들 넣을 예정
 
   /*
   //페이지별로 들어가서 리스트 가져오기
@@ -54,6 +53,7 @@ async function homeHandler(req: any, res: any) {
     );
   }
   */
+
   const response: any = await axios.get(
     "https://www.walkerplus.com/event_list/" +
       (month < 10 ? "0" : "") +
@@ -61,30 +61,61 @@ async function homeHandler(req: any, res: any) {
       "/eg0135/"
   );
 
-  let list: string[] = response.data.split('"m-mainlist-item"');
-
-  let tagList: string[] = [];
-  for (
-    let i: number = 0;
-    i < list[1].split("m-mainlist-item__tagsitemlink").length - 1;
-    i++
-  ) {
-    let tag: string = list[1]
-      .split("m-mainlist-item__tagsitemlink")
-      [i + 1].split("</")[0]
-      .split('">')[1];
-    tagList.push(tag);
+  if (!response || !response.data) {
+    res.status(404).send({ reason: "not found page" });
+    return;
   }
 
-  let info: {} = {
-    ori: list[1].trim(),
-    count: list[1].indexOf("入場無料") ? true : false,
-    link: list[1].split("event/")[1].split("/")[0].trim(),
-    title: list[1].split('m-mainlist-item__ttl">')[1].split("</span")[0].trim(),
-    date: list[1].split("終了間近</span>\n")[1].split("</p>")[0].trim(),
-    tag: tagList,
-  };
-  res.send(info);
+  let responseText: string = response.data;
+  let list: string[] = responseText.split('"m-mainlist-item"');
+
+  const maxPage: string = responseText
+    .split("件中")[0]
+    .split("m-mainlist-condition__result")[1]
+    .split("全")[1];
+
+  function getList() {
+    let result: {}[] = [];
+    // 페이지 하나만 반환하니까 위에서 for문으로 여러개 돌려서 리스트 쭉 내오기
+    for (let i = 1; i < list.length; i++) {
+      ///////0개일경우 예외처리 만들기//////
+      let tagList: string[] = [];
+      for (
+        let j = 0;
+        j < list[i].split("m-mainlist-item__tagsitemlink").length - 1;
+        j++
+      ) {
+        let tag: string = list[i]
+          .split("m-mainlist-item__tagsitemlink")
+          [j + 1].split("</")[0]
+          .split('">')[1];
+        tagList.push(tag);
+      }
+
+      let info: {} = {
+        무료: tagList.includes("入場無料") ? true : false,
+        link: list[i].split("event/")[1].split("/")[0].trim(),
+        title: list[i]
+          .split('m-mainlist-item__ttl">')[1]
+          .split("</span")[0]
+          .trim(),
+        date: list[i]
+          .split("m-mainlist-item-event__period")[1]
+          .split("20")[1]
+          .split("</p>")[0]
+          .trim(),
+        tag: tagList,
+      };
+      result.push(info);
+      return info;
+    }
+  }
+
+  res.send({
+    link: "https://www.walkerplus.com/event_list/eg0135/",
+    list: result,
+    src: maxPage,
+  });
 }
 
 /*
