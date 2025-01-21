@@ -34,25 +34,18 @@ async function connectServer() {
   console.log("connection successful?", connection != null);
 }
 
-app.get("/", homeHandler);
-async function homeHandler(req: any, res: any) {
+app.get("/update", updateHandler);
+async function updateHandler(req: any, res: any) {
   if (connection == null) return;
 
-  let result: Festival[][] = [];
+  let result: Festival[] = [];
+  let list: Festival[] = [];
 
   for (let i: number = 0; i < 4; i++) {
     const response: any = await axios.get(getLink(i, 1));
-    if (!response || !response.data) {
-      throw new Error("SourcePage Loading Error");
-    }
+    if (!response || !response.data) return;
 
     let responseData: string = response.data;
-    /*
-    let festivalCount: string = responseData
-      .split("件中")[0]
-      .split("m-mainlist-condition__result")[1]
-      .split("全")[1];
-    */
     let maxPage: string = responseData
       .split("m-pager__current")[1]
       .split("/")[2]
@@ -62,24 +55,36 @@ async function homeHandler(req: any, res: any) {
       res.status(404).send({ reason: "SourcePage Loading Error" });
       return;
     }
-
-    let list: any = [];
-
     for (let j = 1; j < Number(maxPage) + 1; j++) {
-      list = list.concat(await getList(getLink(i, j)));
+      result = result.concat(await getList(getLink(i, j)));
     }
-    result.push(list);
   }
 
+  result = removeDuplicates(result);
   res.send(result);
 }
 
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
+///////////////////////////////////
 ///////////////////////////////////
 
 async function getList(link: string): Promise<Festival[]> {
   const response: AxiosResponse<any> = await axios.get(link);
   if (!response || !response.data) {
-    throw new Error("SourcePage Loading Error");
+    return [];
   }
 
   let list: string[] = response.data.split('"m-mainlist-item"');
@@ -98,6 +103,13 @@ async function getList(link: string): Promise<Festival[]> {
       tagList.push(tag);
     }
 
+    /* db저장 간소화를 위해 생각해봤지만 용량을 조금 더 쓰는게 나을것같음
+    let thumbnail = list[i].split('img src="')[1].split('"')[0];
+    if (!(thumbnail.indexOf("wtd/event/") == -1)) {
+      thumbnail = "//www.walkerplus.com/asset/images/common/no_image_spot.jpg";
+    }
+    */
+
     let info: Festival = {
       id: list[i].split("event/")[1].split("/")[0].trim(),
       title: list[i]
@@ -107,7 +119,7 @@ async function getList(link: string): Promise<Festival[]> {
       thumbnail: list[i].split('img src="')[1].split('"')[0],
       date: list[i]
         .split("m-mainlist-item-event__period")[1]
-        .split("20")[1]
+        .split('">')[1]
         .split("</p>")[0]
         .trim(),
       tag: tagList,
@@ -115,6 +127,13 @@ async function getList(link: string): Promise<Festival[]> {
     result.push(info);
   }
   return result;
+}
+
+function removeDuplicates(list: Festival[]): Festival[] {
+  let result: Festival[] = [];
+  return Array.from(
+    new Map(list.map((festival) => [festival.id, festival])).values()
+  );
 }
 
 function getLink(increase: number, page: number): string {
