@@ -64,23 +64,6 @@ async function updateHandler(req: any, res: any) {
   res.send(result);
 }
 
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-///////////////////////////////////
-
 async function getList(link: string): Promise<Festival[]> {
   const response: AxiosResponse<any> = await axios.get(link);
   if (!response || !response.data) {
@@ -90,40 +73,7 @@ async function getList(link: string): Promise<Festival[]> {
   let list: string[] = response.data.split('"m-mainlist-item"');
   let result: Festival[] = [];
   for (let i = 1; i < list.length; i++) {
-    let tagList: string[] = [];
-    for (
-      let j = 0;
-      j < list[i].split("m-mainlist-item__tagsitemlink").length - 1;
-      j++
-    ) {
-      let tag: string = list[i]
-        .split("m-mainlist-item__tagsitemlink")
-        [j + 1].split("</")[0]
-        .split('">')[1];
-      tagList.push(tag);
-    }
-
-    /* db저장 간소화를 위해 생각해봤지만 용량을 조금 더 쓰는게 나을것같음
-    let thumbnail = list[i].split('img src="')[1].split('"')[0];
-    if (!(thumbnail.indexOf("wtd/event/") == -1)) {
-      thumbnail = "//www.walkerplus.com/asset/images/common/no_image_spot.jpg";
-    }
-    */
-
-    let info: Festival = {
-      id: list[i].split("event/")[1].split("/")[0].trim(),
-      title: list[i]
-        .split('m-mainlist-item__ttl">')[1]
-        .split("</span")[0]
-        .trim(),
-      thumbnail: list[i].split('img src="')[1].split('"')[0],
-      date: list[i]
-        .split("m-mainlist-item-event__period")[1]
-        .split('">')[1]
-        .split("</p>")[0]
-        .trim(),
-      tag: tagList,
-    };
+    let info: Festival = getInfo(list[i]);
     result.push(info);
   }
   return result;
@@ -152,6 +102,127 @@ function getLink(increase: number, page: number): string {
   return link;
 }
 
+function getInfo(text: string): Festival {
+  let id: string = text.split("event/")[1].split("/")[0].trim();
+
+  ////////////////////////////////////////////////
+
+  let title: string = text
+    .split('m-mainlist-item__ttl">')[1]
+    .split("</span")[0]
+    .trim();
+
+  ////////////////////////////////////////////////
+
+  let thumbnail: string = text.split('img src="')[1].split('"')[0];
+
+  ////////////////////////////////////////////////
+
+  let date: string;
+  if (text.includes("m-mainlist-item-event__open")) {
+    date = text
+      .split("m-mainlist-item-event__open")[1]
+      .split('"')[1]
+      .split('"')[0]
+      .split("</span>")[1]
+      .split("</p>")[0]
+      .trim();
+  } else {
+    date = text
+      .split("m-mainlist-item-event__period")[1]
+      .split('">')[1]
+      .split("</p>")[0]
+      .trim();
+  }
+
+  if (date.includes("旬")) {
+    date = date.replaceAll("上旬", "5日");
+    date = date.replaceAll("中旬", "15日");
+    date = date.replaceAll("下旬", "25日");
+  }
+
+  let year: number = Number(date.split("年")[0]);
+  let month: number = Number(date.split("年")[1].split("月")[0]) - 1;
+  if (month == -1) month = 11;
+  let day: number = Number(date.split("月")[1].split("日")[0]);
+
+  let startDate: Date = new Date(Date.UTC(year, month, day));
+  let endDate: Date;
+
+  switch (true) {
+    case /～/.test(date):
+      if (true) break;
+
+    case /・/.test(date):
+      break;
+
+    default:
+      // 뒷날짜가 년이 없을경우, 월이 없을경우, 아예 없을경우
+      break;
+  }
+
+  //////////////////////////////////////////
+
+  let metropolis: string = text
+    .split("m-mainlist-item__maplink")[1]
+    .split("</p>")[0]
+    .split('">')[1]
+    .split("</a>")[0]
+    .trim();
+
+  //////////////////////////////////////////
+
+  let locate: string = "";
+  if (text.split("m-mainlist-item__maplink").length == 3) {
+    locate = text
+      .split("m-mainlist-item__maplink")[2]
+      .split("</p>")[0]
+      .split('">')[1]
+      .split("</a>")[0]
+      .trim();
+  } else {
+    locate = text
+      .split("m-mainlist-item__maplink")[1]
+      .split("</p>")[0]
+      .split("</a>")[1]
+      .trim();
+  }
+
+  ///////////////////////////////////////////////
+
+  let place: string = text
+    .split("m-mainlist-item-event__place")[1]
+    .split("</p>")[0]
+    .split(">")[1];
+
+  ////////////////////////////////////////////////
+
+  let tagList: string[] = [];
+  for (
+    let j = 0;
+    j < text.split("m-mainlist-item__tagsitemlink").length - 1;
+    j++
+  ) {
+    let tag: string = text
+      .split("m-mainlist-item__tagsitemlink")
+      [j + 1].split("</")[0]
+      .split('">')[1];
+    tagList.push(tag);
+  }
+
+  const result: Festival = {
+    id: id,
+    title: title,
+    thumbnail: thumbnail,
+    date: String(date),
+    metropolis: metropolis,
+    locate: locate,
+    place: place,
+    tag: tagList,
+    isFree: tagList.includes("入場無料"),
+  };
+  return result;
+}
 /*
 app.get('/random', randomHandler);
 async function randomHandler(req:any, res:any) {
