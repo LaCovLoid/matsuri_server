@@ -2,9 +2,11 @@ import express, { json, request, urlencoded } from "express";
 import { createConnection } from "mysql2/promise";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import axios from "axios";
+import axios, { AxiosResponse } from "axios";
 import cors from "cors";
 import * as deepl from "deepl-node";
+
+import { Festival } from "../type";
 
 const app = express();
 const port = 3000;
@@ -32,90 +34,103 @@ async function connectServer() {
   console.log("connection successful?", connection != null);
 }
 
-//arrow function으로 바꿔 작성할 것
 app.get("/", homeHandler);
 async function homeHandler(req: any, res: any) {
   if (connection == null) return;
 
-  const now: Date = new Date(); // 현재 날짜
-  let month: number = now.getMonth() + 1; // 0 = 1월
+  let result: Festival[][] = [];
 
-  /*
-  //페이지별로 들어가서 리스트 가져오기
-  for (let i: number = 0; i < 4; i++, month++) {
-    month = month % 12; //12월 초과시 1월로
-
-    const response: any = await axios.get(
-      "https://www.walkerplus.com/event_list/" +
-        (month < 10 ? "0" : "") +
-        String(month) +
-        "/eg0135/"
-    );
-  }
-  */
-
-  const response: any = await axios.get(
-    "https://www.walkerplus.com/event_list/" +
-      (month < 10 ? "0" : "") +
-      String(month) +
-      "/eg0135/"
-  );
-
-  if (!response || !response.data) {
-    res.status(404).send({ reason: "not found page" });
-    return;
-  }
-
-  let responseText: string = response.data;
-  let list: string[] = responseText.split('"m-mainlist-item"');
-
-  const maxPage: string = responseText
-    .split("件中")[0]
-    .split("m-mainlist-condition__result")[1]
-    .split("全")[1];
-
-  function getList() {
-    let result: {}[] = [];
-    // 페이지 하나만 반환하니까 위에서 for문으로 여러개 돌려서 리스트 쭉 내오기
-    for (let i = 1; i < list.length; i++) {
-      ///////0개일경우 예외처리 만들기//////
-      let tagList: string[] = [];
-      for (
-        let j = 0;
-        j < list[i].split("m-mainlist-item__tagsitemlink").length - 1;
-        j++
-      ) {
-        let tag: string = list[i]
-          .split("m-mainlist-item__tagsitemlink")
-          [j + 1].split("</")[0]
-          .split('">')[1];
-        tagList.push(tag);
-      }
-
-      let info: {} = {
-        무료: tagList.includes("入場無料") ? true : false,
-        link: list[i].split("event/")[1].split("/")[0].trim(),
-        title: list[i]
-          .split('m-mainlist-item__ttl">')[1]
-          .split("</span")[0]
-          .trim(),
-        date: list[i]
-          .split("m-mainlist-item-event__period")[1]
-          .split("20")[1]
-          .split("</p>")[0]
-          .trim(),
-        tag: tagList,
-      };
-      result.push(info);
-      return info;
+  for (let i: number = 0; i < 4; i++) {
+    const response: any = await axios.get(getLink(i, 1));
+    if (!response || !response.data) {
+      throw new Error("SourcePage Loading Error");
     }
+
+    let responseData: string = response.data;
+    /*
+    let festivalCount: string = responseData
+      .split("件中")[0]
+      .split("m-mainlist-condition__result")[1]
+      .split("全")[1];
+    */
+    let maxPage: string = responseData
+      .split("m-pager__current")[1]
+      .split("/")[2]
+      .split("（全")[0];
+
+    if (isNaN(Number(maxPage))) {
+      res.status(404).send({ reason: "SourcePage Loading Error" });
+      return;
+    }
+
+    let list: any = [];
+
+    for (let j = 1; j < Number(maxPage) + 1; j++) {
+      list = list.concat(await getList(getLink(i, j)));
+    }
+    result.push(list);
   }
 
-  res.send({
-    link: "https://www.walkerplus.com/event_list/eg0135/",
-    list: result,
-    src: maxPage,
-  });
+  res.send(result);
+}
+
+///////////////////////////////////
+
+async function getList(link: string): Promise<Festival[]> {
+  const response: AxiosResponse<any> = await axios.get(link);
+  if (!response || !response.data) {
+    throw new Error("SourcePage Loading Error");
+  }
+
+  let list: string[] = response.data.split('"m-mainlist-item"');
+  let result: Festival[] = [];
+  for (let i = 1; i < list.length; i++) {
+    let tagList: string[] = [];
+    for (
+      let j = 0;
+      j < list[i].split("m-mainlist-item__tagsitemlink").length - 1;
+      j++
+    ) {
+      let tag: string = list[i]
+        .split("m-mainlist-item__tagsitemlink")
+        [j + 1].split("</")[0]
+        .split('">')[1];
+      tagList.push(tag);
+    }
+
+    let info: Festival = {
+      id: list[i].split("event/")[1].split("/")[0].trim(),
+      title: list[i]
+        .split('m-mainlist-item__ttl">')[1]
+        .split("</span")[0]
+        .trim(),
+      thumbnail: list[i].split('img src="')[1].split('"')[0],
+      date: list[i]
+        .split("m-mainlist-item-event__period")[1]
+        .split("20")[1]
+        .split("</p>")[0]
+        .trim(),
+      tag: tagList,
+    };
+    result.push(info);
+  }
+  return result;
+}
+
+function getLink(increase: number, page: number): string {
+  const now: Date = new Date(); // 현재 날짜
+  let month: number = now.getMonth() + 1 + increase; // 0 = 1월
+  if (month > 12) month = month % 12;
+
+  const link =
+    "https://www.walkerplus.com/event_list/" +
+    (month < 10 ? "0" : "") +
+    String(month) +
+    "/eg0135/" +
+    String(page) +
+    ".html";
+
+  return link;
 }
 
 /*
