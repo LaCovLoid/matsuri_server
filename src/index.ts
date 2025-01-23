@@ -2,14 +2,14 @@ import express, { json, request, urlencoded } from "express";
 import { createConnection } from "mysql2/promise";
 import dotenv from "dotenv";
 import crypto from "crypto";
-import axios, { AxiosResponse } from "axios";
+import axios, { Axios, AxiosResponse } from "axios";
 import cors from "cors";
 import * as deepl from "deepl-node";
 
 import { Festival } from "../type";
 
-const app = express();
-const port = 3000;
+const app: express.Application = express();
+const port: number = 3000;
 let connection: any;
 
 dotenv.config();
@@ -34,37 +34,51 @@ async function connectServer() {
   console.log("connection successful?", connection != null);
 }
 
+//setInterval(updateHandler, 3600000); 1시간마다 한번씩 반복실행
+// 나중에 접속을 못하게 하고 db업데이트용 함수로만 실행
+
 app.get("/update", updateHandler);
-async function updateHandler(req: any, res: any) {
+async function updateHandler(req: express.Request, res: express.Response) {
   if (connection == null) return;
 
-  let result: Festival[] = [];
-  let list: Festival[] = [];
+  let allFestival: Festival[] = [];
+  const monthCount: number = 4;
 
-  for (let i: number = 0; i < 4; i++) {
-    const response: any = await axios.get(getLink(i, 1));
-    if (!response || !response.data) return;
+  try {
+    for (let i: number = 0; i < monthCount; i++) {
+      const response: AxiosResponse = await axios.get(getLink(i, 1));
+      if (!response || !response.data) return;
 
-    let responseData: string = response.data;
-    let maxPage: string = responseData
-      .split("m-pager__current")[1]
-      .split("/")[2]
-      .split("（全")[0];
+      let responseData: string = response.data;
+      let maxPage: string = responseData
+        .split("m-pager__current")[1]
+        .split("/")[2]
+        .split("（全")[0];
 
-    if (isNaN(Number(maxPage))) {
-      res.status(404).send({ reason: "SourcePage Loading Error" });
-      return;
+      if (isNaN(Number(maxPage))) {
+        res.status(404).send({ reason: "SourcePage Loading Error" });
+        return;
+      }
+      for (let j = 1; j < Number(maxPage) + 1; j++) {
+        allFestival = allFestival.concat(await getListFromPage(getLink(i, j)));
+      }
     }
-    for (let j = 1; j < Number(maxPage) + 1; j++) {
-      result = result.concat(await getList(getLink(i, j)));
-    }
+
+    allFestival = removeDuplicates(allFestival);
+    res.send(allFestival);
+  } catch (error) {
+    console.error("Error while updating:", error);
+    res
+      .status(500)
+      .send({ reason: "Internal Server Error", error: error.message });
   }
-
-  result = removeDuplicates(result);
-  res.send(result);
 }
 
-async function getList(link: string): Promise<Festival[]> {
+////////////////////////////////////////////////////
+////////////////////////////////////////////////////
+////////////////////////////////////////////////////
+
+async function getListFromPage(link: string): Promise<Festival[]> {
   const response: AxiosResponse<any> = await axios.get(link);
   if (!response || !response.data) {
     return [];
@@ -86,9 +100,9 @@ function removeDuplicates(list: Festival[]): Festival[] {
   );
 }
 
-function getLink(increase: number, page: number): string {
+function getLink(monthIncrease: number, page: number): string {
   const now: Date = new Date(); // 현재 날짜
-  let month: number = now.getMonth() + 1 + increase; // 0 = 1월
+  let month: number = now.getMonth() + 1 + monthIncrease; // 0 = 1월
   if (month > 12) month = month % 12;
 
   const link =
@@ -119,9 +133,11 @@ function getInfo(text: string): Festival {
   ////////////////////////////////////////////////
 
   let date: string;
+
   if (text.includes("m-mainlist-item-event__open")) {
     date = text
       .split("m-mainlist-item-event__open")[1]
+      .replace('<span class="m-mainlist-item-event__end">終了間近</span>', "")
       .split('"')[1]
       .split('"')[0]
       .split("</span>")[1]
@@ -130,6 +146,7 @@ function getInfo(text: string): Festival {
   } else {
     date = text
       .split("m-mainlist-item-event__period")[1]
+      .replace('<span class="m-mainlist-item-event__end">終了間近</span>', "")
       .split('">')[1]
       .split("</p>")[0]
       .trim();
@@ -141,23 +158,20 @@ function getInfo(text: string): Festival {
     date = date.replaceAll("下旬", "25日");
   }
 
-  let year: number = Number(date.split("年")[0]);
-  let month: number = Number(date.split("年")[1].split("月")[0]) - 1;
-  if (month == -1) month = 11;
-  let day: number = Number(date.split("月")[1].split("日")[0]);
+  let festivalPeriod: Date[] = [];
 
-  let startDate: Date = new Date(Date.UTC(year, month, day));
-  let endDate: Date;
-
+  //쿼리넣기 따로따로
+  // INSERT IGNORE INTO 로 넣으면 UNIQUE KEY값이 같을경우 안들어감
+  //INSERT IGNORE INTO 테이블 VALUES ON DUPLICATE KEY UPDATE ('값1', '값2') 해주면 UNIQUE KEY값이 같으면 업데이트함
   switch (true) {
-    case /～/.test(date):
-      if (true) break;
-
-    case /・/.test(date):
+    case /～/.test(date): // 기간동안 하는 경우
+      festivalPeriod = getFestivalPeriod(date, "～");
       break;
-
-    default:
-      // 뒷날짜가 년이 없을경우, 월이 없을경우, 아예 없을경우
+    case /・/.test(date): // 이틀간 할 경우
+      festivalPeriod = getFestivalPeriod(date, "・");
+      break;
+    default: //기한이 없을경우
+      festivalPeriod = getFestivalPeriod(date, "=");
       break;
   }
 
@@ -222,6 +236,47 @@ function getInfo(text: string): Festival {
     isFree: tagList.includes("入場無料"),
   };
   return result;
+}
+
+function getFestivalPeriod(text: string, symbol: string): Date[] {
+  let startYear: number = Number(text.split("年")[0]);
+  let startMonth: number = Number(text.split("年")[1].split("月")[0]) - 1;
+  if (startMonth == -1) startMonth = 11;
+  let startDay: number = Number(text.split("月")[1].split("日")[0]);
+
+  let startDate: Date = new Date(Date.UTC(startYear, startMonth, startDay));
+  let endDate: Date = startDate;
+
+  if (symbol == "=") {
+    return [startDate, endDate];
+  }
+
+  if (/年/.test(text.split(symbol)[1])) {
+    endDate = new Date(
+      Date.UTC(
+        Number(text.split(symbol)[1].split("年")[0]),
+        Number(text.split(symbol)[1].split("年")[1].split("月")[0]) - 1,
+        Number(text.split(symbol)[1].split("月")[1].split("日")[0])
+      )
+    );
+  } else if (/月/.test(text.split(symbol)[1])) {
+    endDate = new Date(
+      Date.UTC(
+        startYear,
+        Number(text.split(symbol)[1].split("月")[0]) - 1,
+        Number(text.split(symbol)[1].split("月")[1].split("日")[0])
+      )
+    );
+  } else {
+    endDate = new Date(
+      Date.UTC(
+        startYear,
+        startMonth,
+        Number(text.split(symbol)[1].split("日")[0])
+      )
+    );
+  }
+  return [startDate, endDate];
 }
 /*
 app.get('/random', randomHandler);
